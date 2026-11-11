@@ -7,6 +7,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.net.Uri
+import android.provider.Settings
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -119,8 +120,6 @@ private fun AdBlockScreen(
     val blocked by AdBlockStats.blocked.collectAsState()
     val serviceError by AdBlockStats.error.collectAsState()
     val history by BlockedHistory.entries.collectAsState()
-    var status by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
 
     val notifLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -209,6 +208,32 @@ private fun AdBlockScreen(
                 ) {
                     Text(if (running) "Tắt bảo vệ" else "Bật bảo vệ")
                 }
+                Text(
+                    "Để tự khởi động lại sau khi khởi động điện thoại, bật VPN luôn bật trong cài đặt Android.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Cài đặt VPN luôn bật")
+                }
+                TextButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Cài đặt pin và chạy nền")
+                }
             }
         }
 
@@ -221,11 +246,16 @@ private fun AdBlockScreen(
             )
             SummaryCard(
                 title = "DANH SÁCH",
-                value = if (blocklistReady) "Sẵn sàng" else "Đang tải",
-                caption = if (blocklistReady) "có thể lọc quảng cáo" else "đang chuẩn bị",
+                value = if (blocklistReady) "Sẵn sàng" else "Đang đọc",
+                caption = if (blocklistReady) "đóng gói trong ứng dụng" else "đang đọc file nguồn",
                 modifier = Modifier.weight(1f)
             )
         }
+        Text(
+            "Danh sách domain được đóng gói trong APK. Sửa file hosts.txt trong mã nguồn và build APK mới để cập nhật.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         Button(
             onClick = onOpenHistory,
@@ -242,33 +272,11 @@ private fun AdBlockScreen(
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(18.dp)
         ) {
-            Text(if (blocklistReady) "Mở trình duyệt riêng" else "Đang tải danh sách chặn...")
-        }
-
-        OutlinedButton(
-            onClick = {
-                status = "Đang cập nhật danh sách..."
-                scope.launch {
-                    val result = withContext(Dispatchers.IO) {
-                        runCatching { Blocklist.update(context) }
-                    }
-                    status = result.fold(
-                        onSuccess = { "Đã tải $it tên miền" },
-                        onFailure = { "Lỗi cập nhật: ${it.message ?: "không xác định"}" }
-                    )
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp)
-        ) {
-            Text("Cập nhật danh sách chặn")
+            Text(if (blocklistReady) "Mở trình duyệt riêng" else "Đang đọc danh sách chặn...")
         }
 
         if (blocklistError.isNotEmpty()) {
-            Text("Không tải được danh sách chặn: $blocklistError", color = MaterialTheme.colorScheme.error)
-        }
-        if (status.isNotEmpty()) {
-            Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Không đọc được danh sách chặn: $blocklistError", color = MaterialTheme.colorScheme.error)
         }
     }
 }
@@ -438,7 +446,7 @@ private fun BlockedHistoryScreen(onBack: () -> Unit) {
 
 @Composable
 private fun AdBlockBrowser(onClose: () -> Unit) {
-    var address by remember { mutableStateOf("https://www.google.com") }
+    var address by remember { mutableStateOf("https://www.youtube.com") }
     var status by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
@@ -453,6 +461,10 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
         }
     }
 
+    BackHandler(enabled = webView?.canGoBack() == true) {
+        webView?.goBack()
+    }
+
     Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -460,7 +472,7 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
                 onValueChange = { address = it },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                label = { Text("Địa chỉ hoặc từ khóa") }
+                label = { Text("Tìm trên YouTube hoặc nhập địa chỉ") }
             )
             Spacer(Modifier.width(8.dp))
             Button(onClick = openAddress) {
@@ -468,15 +480,28 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
             }
         }
 
-        Row {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             TextButton(
-                onClick = { if (webView?.canGoBack() == true) webView?.goBack() },
+                onClick = { webView?.goBack() },
                 enabled = webView?.canGoBack() == true
             ) {
-                Text("Quay lại")
+                Text("‹ Quay lại")
             }
+            TextButton(
+                onClick = { webView?.goForward() },
+                enabled = webView?.canGoForward() == true
+            ) {
+                Text("Tiến ›")
+            }
+            TextButton(
+                onClick = { webView?.reload() },
+                enabled = webView != null
+            ) {
+                Text("Tải lại")
+            }
+            Spacer(Modifier.weight(1f))
             TextButton(onClick = onClose) {
-                Text("Đóng trình duyệt")
+                Text("Đóng")
             }
         }
 
@@ -492,9 +517,10 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
                 WebView(viewContext).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.mediaPlaybackRequiresUserGesture = false
                     settings.safeBrowsingEnabled = true
                     settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView,
@@ -545,7 +571,7 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
                         }
                     }
                     webView = this
-                    loadUrl("https://www.google.com", BrowserPrivacyHeaders)
+                    loadUrl("https://www.youtube.com", BrowserPrivacyHeaders)
                 }
             },
             modifier = Modifier.weight(1f),
@@ -566,7 +592,7 @@ private fun normalizeBrowserUrl(input: String): String? {
     if (value.isEmpty()) return null
 
     val url = if (value.contains(' ') || !value.contains('.')) {
-        "https://www.google.com/search?q=${Uri.encode(value)}"
+        "https://www.youtube.com/results?search_query=${Uri.encode(value)}"
     } else if (value.startsWith("http://", ignoreCase = true) ||
         value.startsWith("https://", ignoreCase = true)
     ) {
