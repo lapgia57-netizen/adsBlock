@@ -120,6 +120,7 @@ private fun AdBlockScreen(
     val blocked by AdBlockStats.blocked.collectAsState()
     val serviceError by AdBlockStats.error.collectAsState()
     val history by BlockedHistory.entries.collectAsState()
+    var status by remember { mutableStateOf("") }
 
     val notifLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -156,6 +157,9 @@ private fun AdBlockScreen(
 
         if (serviceError.isNotEmpty()) {
             Text(serviceError, color = MaterialTheme.colorScheme.error)
+        }
+        if (status.isNotEmpty()) {
+            Text(status, color = MaterialTheme.colorScheme.error)
         }
 
         Card(
