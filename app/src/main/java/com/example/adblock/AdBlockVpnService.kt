@@ -2,6 +2,7 @@ package com.example.adblock
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -37,11 +38,15 @@ class AdBlockVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopVpn()
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return Service.START_NOT_STICKY
         }
         startForegroundNotification()
-        if (!running) startVpn()
+        if (!running) {
+            AdBlockStats.error.value = ""
+            startVpn()
+        }
         return Service.START_STICKY
     }
 
@@ -52,18 +57,30 @@ class AdBlockVpnService : VpnService() {
     }
 
     private fun runTunnel() {
-        Blocklist.load(this)
-
-        val pfd = Builder()
-            .setSession("AdBlock")
-            .addAddress("10.0.0.2", 32)
-            .addDnsServer(vpnDns)
-            .addRoute(vpnDns, 32)
-            .setBlocking(true)
-            .establish()
+        val pfd = try {
+            Blocklist.load(this)
+            Builder()
+                .setSession("AdBlock")
+                .addAddress("10.0.0.2", 32)
+                .addDnsServer(vpnDns)
+                .addRoute(vpnDns, 32)
+                .setBlocking(true)
+                .establish()
+        } catch (error: Exception) {
+            running = false
+            AdBlockStats.running.value = false
+            AdBlockStats.error.value =
+                "Không thể khởi động VPN: ${error.message ?: "lỗi không xác định"}"
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
 
         if (pfd == null) {
             running = false
+            AdBlockStats.running.value = false
+            AdBlockStats.error.value = "Android không cấp được kết nối VPN"
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
@@ -84,10 +101,19 @@ class AdBlockVpnService : VpnService() {
                 val packet = buf.copyOf(n)
                 pool?.execute { handle(packet, output) }
             }
-        } catch (_: IOException) {
-            // TUN đã đóng khi người dùng tắt VPN
+        } catch (error: IOException) {
+            if (running) {
+                AdBlockStats.error.value =
+                    "Kết nối VPN bị gián đoạn: ${error.message ?: "lỗi đọc dữ liệu"}"
+            }
         } finally {
             running = false
+            AdBlockStats.running.value = false
+            if (tun === pfd) {
+                tun = null
+                pfd.close()
+                stopSelf()
+            }
         }
     }
 
@@ -143,10 +169,31 @@ class AdBlockVpnService : VpnService() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "AdBlock", NotificationManager.IMPORTANCE_LOW)
         )
+
+        val openAppIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, AdBlockVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("AdBlock đang chặn quảng cáo")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentText("Tiếp tục chạy nền · Nhấn để mở ứng dụng")
+            .setSmallIcon(R.drawable.ic_adblock_notification)
+            .setContentIntent(openAppIntent)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Dừng",
+                stopIntent
+            )
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .build()
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, notification,
@@ -157,6 +204,13 @@ class AdBlockVpnService : VpnService() {
     override fun onDestroy() {
         stopVpn()
         super.onDestroy()
+    }
+
+    override fun onRevoke() {
+        stopVpn()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onRevoke()
     }
 
     companion object {

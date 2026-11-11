@@ -7,6 +7,8 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -39,6 +41,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val BrowserPrivacyHeaders = mapOf(
+    "DNT" to "1",
+    "Sec-GPC" to "1"
+)
 
 private val AdBlockColorScheme = darkColorScheme(
     primary = Color(0xFF79E0B5),
@@ -75,8 +82,8 @@ private fun AdBlockApp() {
     LaunchedEffect(context) {
         try {
             withContext(Dispatchers.IO) {
-                Blocklist.load(context)
                 BlockedHistory.load(context)
+                Blocklist.load(context)
             }
             blocklistReady = true
         } catch (e: IOException) {
@@ -110,6 +117,7 @@ private fun AdBlockScreen(
     val context = LocalContext.current
     val running by AdBlockStats.running.collectAsState()
     val blocked by AdBlockStats.blocked.collectAsState()
+    val serviceError by AdBlockStats.error.collectAsState()
     val history by BlockedHistory.entries.collectAsState()
     var status by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -141,7 +149,14 @@ private fun AdBlockScreen(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("ADBLOCK", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             Text("Bảo vệ kết nối", style = MaterialTheme.typography.headlineMedium)
-            Text("Chặn miền quảng cáo ngay trên thiết bị.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Có thể tiếp tục chạy nền khi thu nhỏ ứng dụng.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (serviceError.isNotEmpty()) {
+            Text(serviceError, color = MaterialTheme.colorScheme.error)
         }
 
         Card(
@@ -386,7 +401,7 @@ private fun BlockedHistoryScreen(onBack: () -> Unit) {
                 }
             }
         } else {
-            items(entries, key = { "${it.timestamp}-${it.domain}-${it.source}" }) { entry ->
+            items(entries, key = { it.id }) { entry ->
                 Card(
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -425,6 +440,7 @@ private fun BlockedHistoryScreen(onBack: () -> Unit) {
 private fun AdBlockBrowser(onClose: () -> Unit) {
     var address by remember { mutableStateOf("https://www.google.com") }
     var status by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
 
     val openAddress: () -> Unit = {
@@ -433,7 +449,7 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
             status = "Địa chỉ không hợp lệ"
         } else {
             status = ""
-            webView?.loadUrl(url)
+            webView?.loadUrl(url, BrowserPrivacyHeaders)
         }
     }
 
@@ -467,12 +483,18 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
         if (status.isNotEmpty()) {
             Text(status, style = MaterialTheme.typography.bodySmall)
         }
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
 
         AndroidView(
             factory = { viewContext ->
                 WebView(viewContext).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.safeBrowsingEnabled = true
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                     webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(
                             view: WebView,
@@ -487,7 +509,7 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
                             request: WebResourceRequest
                         ): WebResourceResponse? {
                             val host = request.url.host ?: return null
-                            if (!Blocklist.isBlocked(host)) return null
+                            if (!Blocklist.isAdRequest(host, request.url.encodedPath.orEmpty())) return null
                             AdBlockStats.blocked.update { it + 1 }
                             BlockedHistory.record(view.context, host, BlockedSource.BROWSER)
                             return WebResourceResponse(
@@ -502,11 +524,28 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
                             url: String?,
                             favicon: android.graphics.Bitmap?
                         ) {
+                            isLoading = true
+                            status = ""
                             if (url != null) address = url
+                        }
+
+                        override fun onPageFinished(view: WebView, url: String?) {
+                            isLoading = false
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            error: WebResourceError
+                        ) {
+                            if (request.isForMainFrame) {
+                                isLoading = false
+                                status = "Không tải được trang: ${error.description}"
+                            }
                         }
                     }
                     webView = this
-                    loadUrl("https://www.google.com")
+                    loadUrl("https://www.google.com", BrowserPrivacyHeaders)
                 }
             },
             modifier = Modifier.weight(1f),

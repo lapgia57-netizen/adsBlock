@@ -8,6 +8,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
+import java.util.UUID
 
 enum class BlockedSource(val displayName: String) {
     DNS("DNS"),
@@ -17,7 +18,8 @@ enum class BlockedSource(val displayName: String) {
 data class BlockedEntry(
     val domain: String,
     val timestamp: Long,
-    val source: BlockedSource
+    val source: BlockedSource,
+    val id: String = UUID.randomUUID().toString()
 )
 
 object BlockedHistory {
@@ -46,7 +48,9 @@ object BlockedHistory {
                                 BlockedEntry(
                                     domain = item.getString("domain"),
                                     timestamp = item.getLong("timestamp"),
-                                    source = BlockedSource.valueOf(item.getString("source"))
+                                    source = BlockedSource.valueOf(item.getString("source")),
+                                    id = item.optString("id").takeIf(String::isNotBlank)
+                                        ?: UUID.randomUUID().toString()
                                 )
                             )
                         }
@@ -109,6 +113,7 @@ object BlockedHistory {
         items.forEach { entry ->
             json.put(
                 JSONObject()
+                    .put("id", entry.id)
                     .put("domain", entry.domain)
                     .put("timestamp", entry.timestamp)
                     .put("source", entry.source.name)
