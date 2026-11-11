@@ -97,6 +97,7 @@ class AdBlockVpnService : VpnService() {
 
         val reply: ByteArray = if (Blocklist.isBlocked(q.name)) {
             AdBlockStats.blocked.update { it + 1 }
+            BlockedHistory.record(this, q.name, BlockedSource.DNS)
             DnsPacket.buildBlockedResponse(packet, q, udp.dnsStart)
         } else {
             forward(packet, udp.dnsStart, udp.dnsEnd) ?: return
