@@ -1,0 +1,8 @@
+# Danh sách dự phòng khi chưa tải được danh sách đầy đủ
+0.0.0.0 doubleclick.net
+0.0.0.0 googlesyndication.com
+0.0.0.0 googleadservices.com
+0.0.0.0 adservice.google.com
+0.0.0.0 ads.yahoo.com
+0.0.0.0 adnxs.com
+0.0.0.0 scorecardresearch.com
