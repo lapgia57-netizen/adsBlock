@@ -173,7 +173,7 @@ private fun AdBlockBrowser(onClose: () -> Unit) {
     var status by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
 
-    val openAddress = {
+    val openAddress: () -> Unit = {
         val url = normalizeBrowserUrl(address)
         if (url == null) {
             status = "Địa chỉ không hợp lệ"
